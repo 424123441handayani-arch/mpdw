@@ -1,0 +1,166 @@
+---
+title: "Tugas-3-Praktikum-MPDW"
+author: "FADILLAH HANDAYANI"
+date: "2026-09-10"
+output: html_document
+---
+
+```{r}
+library(dLagM)
+library(dynlm)
+library(MLmetrics)
+library(lmtest)
+library(car)
+library(readr)
+```
+
+```{r}
+data <- read_csv("C:\\Users\\ridho\\OneDrive\\Documents\\NewDelhi_Air_quality_MPDW.csv")
+```
+```{r}
+head(data)
+```
+
+```{r}
+Y <- data$AQI
+X <- data$pm25
+```
+
+```{r}
+df <- data.frame(Y = Y, X = X)
+```
+
+```{r}
+n <- nrow(df)
+n_train <- round(0.8 * n)
+```
+
+```{r}
+train_data <- df[1:n_train, ]
+test_data  <- df[(n_train + 1):n, ]
+```
+Data kualitas udara New Delhi dibagi menjadi dua bagian dengan rasio 80% data training dan 20% data testing. Data training digunakan untuk membina/membentuk parameter model regresi lag, sedangkan data testing digunakan sebagai data evaluasi untuk menguji seberapa akurat model dalam meramalkan data di masa mendatang yang belum pernah dilihat sebelumnya.
+
+```{r}
+train_ts <- ts(train_data)
+test_ts  <- ts(test_data)
+```
+
+```{r}
+model_koyck <- koyckDlm(x = train_data$X, y = train_data$Y)
+summary(model_koyck)
+```
+Model Koyck mengasumsikan bahwa pengaruh peubah bebas $X$ (PM2.5) di masa lalu terhadap variabel respons $Y$ (AQI) berkurang secara eksponensial seiring bertambahnya jeda waktu (lag). Lihat nilai p-value pada koefisien $X_t$ dan $Y_{t-1}$. Jika $p\text{-value} < 0{,}05$, artinya nilai $X$ saat ini maupun nilai $Y$ satu periode sebelumnya berpengaruh signifikan terhadap nilai AQI saat ini.
+
+```{r}
+fore_koyck <- forecast(model_koyck, x = test_data$X, h = nrow(test_data))
+mape_koyck <- MAPE(fore_koyck$forecasts, test_data$Y)
+cat("MAPE Model Koyck:", mape_koyck, "\n")
+```
+```{r}
+model_dlm <- dlm(x = train_data$X, y = train_data$Y, q = 2)
+summary(model_dlm)
+```
+Model DLM mengasumsikan bahwa nilai AQI saat ini dipengaruhi oleh nilai PM2.5 saat ini ($X_t$), nilai PM2.5 satu periode sebelumnya ($X_{t-1}$), dan dua periode sebelumnya ($X_{t-2}$).
+Koefisien lag menunjukkan besarnya perubahan pada AQI untuk setiap kenaikan satu satuan PM2.5 pada masing-masing periode lag waktu tertentu.
+
+```{r}
+fore_dlm <- forecast(model_dlm, x = test_data$X, h = nrow(test_data))
+mape_dlm <- MAPE(fore_dlm$forecasts, test_data$Y)
+cat("MAPE Model DLM (q=2):", mape_dlm, "\n")
+```
+Model ARDL menggabungkan struktur dari model Autoregressive (efek histori $Y$ sendiri) dan Distributed Lag (efek histori $X$). Nilai AQI saat ini ($Y_t$) dipengaruhi oleh nilai AQI satu periode sebelumnya ($Y_{t-1}$) serta nilai PM2.5 saat ini ($X_t$) dan satu periode sebelumnya ($X_{t-1}$).
+
+```{r}
+model_ardl <- ardlDlm(formula = Y ~ X, data = train_data, p = 1, q = 1)
+```
+
+Perbandingan Keakuratan Model (MAPE)
+```{r}
+fore_ardl <- forecast(model_ardl, x = test_data$X)
+```
+MAPE (Mean Absolute Percentage Error) mengukur rata-rata persentase kesalahan antara hasil ramalan model dengan data aktual di lapangan.
+
+Pengambilan Kesimpulan Model Terbaik:
+Model yang dipilih sebagai model terbaik adalah model yang memiliki nilai MAPE paling kecil di antara Koyck, DLM, dan ARDL.
+
+(Nilai MAPE di bawah 10% menandakan kemampuan peramalan yang sangat baik/sangat presisi).
+
+```{r}
+mape_ardl <- MAPE(fore_ardl$forecasts, test_data$Y[1:length(fore_ardl$forecasts)])
+cat("MAPE Model ARDL (p=1, q=1):", mape_ardl, "\n")
+```
+```{r}
+# 1. PERBANDINGAN AKURASI (MAPE) SEMUA MODEL
+# Menggabungkan hasil MAPE dari Model Koyck, DLM, dan ARDL ke dalam satu tabel
+akurasi <- matrix(c(mape_koyck, mape_dlm, mape_ardl))
+row.names(akurasi) <- c("Koyck", "DLM", "ARDL (1,1)")
+colnames(akurasi) <- c("MAPE")
+
+cat("--- TABEL PERBANDINGAN MAPE ---\n")
+print(akurasi)
+
+# 2. VISUALISASI GRAFIK PERBANDINGAN (AKTUAL VS RAMALAN)
+# Menyiapkan plot data aktual (Nilai Y Testing)
+plot(test_data$Y, type = "b", col = "black", lwd = 2, pch = 19,
+     ylab = "Nilai Y (AQI)", xlab = "Waktu / Observasi Testing", 
+     main = "Grafik Perbandingan Hasil Ramalan Model Lag")
+
+# Menambahkan garis hasil ramalan masing-masing model
+lines(fore_koyck$forecasts, col = "red", type = "b", pch = 16, lty = 2)
+lines(fore_dlm$forecasts, col = "blue", type = "b", pch = 17, lty = 2)
+lines(fore_ardl$forecasts, col = "green", type = "b", pch = 18, lty = 2)
+
+# Menambahkan Legenda
+legend("topright", 
+       legend = c("Data Aktual", "Model Koyck", "Model DLM", "Model ARDL"),
+       col = c("black", "red", "blue", "green"), 
+       lty = c(1, 2, 2, 2), 
+       pch = c(19, 16, 17, 18), 
+       cex = 0.8)
+```
+
+Garis hitam melambangkan Data Aktual nilai AQI pada periode pengujian (testing).
+
+Garis berwarna merah, biru, dan hijau melambangkan hasil peramalan dari masing-masing model (Koyck, DLM, dan ARDL).
+
+Model yang secara visual garis ramalannya paling berhimpit/menempel dekat dengan garis hitam merupakan model yang paling presisi dalam mengikuti pergerakan pola kualitas udara aktual.
+
+```{r}
+# UJI ASUMSI SISAAN (DIAGNOSTIK MODEL)
+
+# Ambil sisaan dari model ARDL
+sisaan_ardl <- residuals(model_ardl$model)
+```
+
+
+```{r}
+# 1. UJI AUTOKORELASI (Durbin-Watson Test)
+# H0: Tidak ada autokorelasi pada sisaan
+dw_test <- dwtest(model_ardl$model)
+cat("--- 1. UJI AUTOKORELASI (Durbin-Watson) ---\n")
+print(dw_test)
+```
+Uji Autokorelasi (Durbin-Watson Test)
+Berdasarkan hasil uji Durbin-Watson, diperoleh nilai $p\text{-value} = 0{,}00002263$. Karena nilai $p\text{-value} < 0{,}05$, maka keputusan adalah Tolak $H_0$. Hal ini menunjukkan bahwa sisaan model ARDL masih mengalami masalah autokorelasi (sisaan antar-waktu saling memengaruhi).
+
+```{r}
+# 2. UJI HETEROSKEDASTISITAS (Breusch-Pagan Test)
+# H0: Ragam sisaan homogen (homoskedastisitas)
+bp_test <- bptest(model_ardl$model)
+cat("\n--- 2. UJI HETEROSKEDASTISITAS (Breusch-Pagan) ---\n")
+print(bp_test)
+```
+Uji Heteroskedastisitas (Breusch-Pagan Test)Berdasarkan hasil uji Breusch-Pagan, diperoleh nilai $p\text{-value} = 0{,}8885$. Karena nilai $p\text{-value} > 0{,}05$, maka keputusan adalah Gagal Tolak $H_0$. Artinya, model telah memenuhi asumsi homoskedastisitas (ragam sisaan bersifat konstan/homogen).
+
+```{r}
+# 3. UJI NORMALITAS (Shapiro-Wilk Test)
+# H0: Sisaan berdistribusi normal
+sw_test <- shapiro.test(sisaan_ardl)
+cat("\n--- 3. UJI NORMALITAS (Shapiro-Wilk) ---\n")
+print(sw_test)
+```
+Uji Normalitas (Shapiro-Wilk Test)Berdasarkan hasil uji Shapiro-Wilk, diperoleh nilai $p\text{-value} = 0{,}4439$. Karena nilai $p\text{-value} > 0{,}05$, maka keputusan adalah Gagal Tolak $H_0$. Artinya, sisaan model ARDL berdistribusi normal.
+
+Kesimpulan
+Model ARDL yang dibentuk sudah memenuhi asumsi ragam homogen (homoskedastisitas) dan kebiasan distribusi normal. Namun, model ini masih mengalami kendala autokorelasi, sehingga disarankan untuk menambah penyesuaian lag agar model menjadi lebih sempurna.
